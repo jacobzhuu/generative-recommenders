@@ -134,27 +134,27 @@ Adnan Akhundov, Bugra Akyildiz, Shabab Ayub, Alex Bao, Renqin Cai, Jennifer Cao,
 
 For the initial paper describing the Generative Recommender problem formulation and the algorithms used, including HSTU and M-FALCON, please refer to ``Actions Speak Louder than Words: Trillion-Parameter Sequential Transducers for Generative Recommendations``([ICML'24 paper](https://dl.acm.org/doi/10.5555/3692070.3694484), [slides](https://icml.cc/media/icml-2024/Slides/32684.pdf)).
 
-## Yelp 两次实验复盘（第一次 vs 第二次）
+## Yelp Experiment Retrospective (Run 1 vs Run 2)
 
-本节记录本仓库在 Yelp 任务上的两次完整实验过程、代码改动点和结果对比，便于复现与审计。
+This section documents two full Yelp experiment cycles in this repository, including code changes and result comparisons, to support reproducibility and auditing.
 
-### 1) 运行环境与数据
+### 1) Runtime Environment and Data
 
-- 环境：`conda` 环境 `gr26`
-- 关键依赖：`torch`、`fbgemm_gpu`、`gin-config`
-- 项目目录：`/home/linjx/code/generative-recommenders`
-- Yelp 原始数据目录：`/home/linjx/code/SELFRec-main/dataset/yelp`
-- 配置文件：`configs/yelp/hstu-sampled-softmax-n512-final.gin`
+- Environment: `conda` environment `gr26`
+- Key dependencies: `torch`, `fbgemm_gpu`, `gin-config`
+- Project directory: `/home/linjx/code/generative-recommenders`
+- Yelp raw data directory: `/home/linjx/code/SELFRec-main/dataset/yelp`
+- Config file: `configs/yelp/hstu-sampled-softmax-n512-final.gin`
 
-### 2) 第一次跑模型（Baseline）细节
+### 2) First Model Run (Baseline) Details
 
-#### 2.1 当时的训练与评估逻辑
+#### 2.1 Training and evaluation logic at that time
 
-- 预处理会构建 `train/valid/test` 三个 split 的序列文件，但不做“严格时序过滤”。
-- Yelp 的训练阶段评估集默认使用 `test`（即训练期间即看测试集表现）。
-- 没有基于 `selection_score` 的 best checkpoint 选择与早停控制。
+- Preprocessing generated sequence files for `train/valid/test`, but without strict chronological filtering.
+- During Yelp training, the default evaluation split was `test` (i.e., test performance was monitored during training).
+- There was no best-checkpoint selection or early-stopping control based on `selection_score`.
 
-#### 2.2 典型运行方式（第一次）
+#### 2.2 Typical command flow (Run 1)
 
 ```bash
 conda activate gr26
@@ -162,7 +162,7 @@ python preprocess_yelp_data.py
 python main.py --gin_config_file configs/yelp/hstu-sampled-softmax-n512-final.gin --master_port=12345
 ```
 
-训练完成后常用最后一个 checkpoint（如 `*_ep200`）做评估：
+After training, the last checkpoint (for example `*_ep200`) was typically used for evaluation:
 
 ```bash
 python evaluate_checkpoint.py \
@@ -171,40 +171,40 @@ python evaluate_checkpoint.py \
   --device cuda
 ```
 
-### 3) 第二次代码修改（相对第一次）
+### 3) Code Changes in Run 2 (Relative to Run 1)
 
-#### 3.1 严格时序评估预处理（核心改动）
+#### 3.1 Strict chronological filtering for evaluation preprocessing (key change)
 
-- 文件：`generative_recommenders/research/data/preprocessor.py`
-- 改动：新增严格时序过滤，保证 `target_ts > max(train_history_ts)` 才进入 `valid/test`。
-- 同时在预处理日志输出过滤统计（保留数/剔除数）。
+- File: `generative_recommenders/research/data/preprocessor.py`
+- Change: added strict chronological filtering so that a sample enters `valid/test` only if `target_ts > max(train_history_ts)`.
+- Also added filtering statistics (kept/removed counts) in preprocessing logs.
 
-本次重跑预处理后的日志示例：
+Example logs after rerunning preprocessing:
 
 - `train/valid/test = 166620/3540/3601`
-- 过滤前 `valid/test = 55479/55436`
+- `valid/test = 55479/55436` before filtering
 
-#### 3.2 训练阶段改为 `valid` 选模，`test` 仅最终汇报
+#### 3.2 Use `valid` for model selection during training, and `test` only for final reporting
 
-- 文件：`generative_recommenders/research/data/reco_dataset.py`
-- 改动：`get_reco_dataset(...)` 新增 `eval_split`，支持 `valid/test` 切换。
+- File: `generative_recommenders/research/data/reco_dataset.py`
+- Change: added `eval_split` to `get_reco_dataset(...)` to support switching between `valid/test`.
 
-- 文件：`generative_recommenders/research/trainer/train.py`
-- 改动：`train_fn(...)` 新增 `eval_split` 参数并传入数据集构建逻辑。
+- File: `generative_recommenders/research/trainer/train.py`
+- Change: added `eval_split` to `train_fn(...)` and propagated it into dataset construction.
 
-- 文件：`configs/yelp/hstu-sampled-softmax-n512-final.gin`
-- 改动：`train_fn.eval_split = "valid"`。
+- File: `configs/yelp/hstu-sampled-softmax-n512-final.gin`
+- Change: set `train_fn.eval_split = "valid"`.
 
-#### 3.3 新增 best checkpoint 与早停机制
+#### 3.3 Added best-checkpoint selection and early stopping
 
-- 文件：`generative_recommenders/research/trainer/train.py`
-- 改动：
-  - 新增 `model_selection_weights`
-  - 新增 `save_best_checkpoint`
-  - 新增 `early_stop_patience / early_stop_min_epochs / early_stop_min_delta / early_stop_full_eval_only`
-  - 日志新增 `selection_score`、`NDCG@20`、`HR@20`
+- File: `generative_recommenders/research/trainer/train.py`
+- Changes:
+  - Added `model_selection_weights`
+  - Added `save_best_checkpoint`
+  - Added `early_stop_patience / early_stop_min_epochs / early_stop_min_delta / early_stop_full_eval_only`
+  - Added `selection_score`, `NDCG@20`, and `HR@20` to logs
 
-- 当前 Yelp 配置：
+- Current Yelp config:
   - `train_fn.save_best_checkpoint = True`
   - `train_fn.model_selection_weights = {'ndcg@10': 1.0, 'ndcg@20': 2.0, 'hr@10': 1.0, 'hr@20': 2.0}`
   - `train_fn.early_stop_patience = 6`
@@ -212,22 +212,22 @@ python evaluate_checkpoint.py \
   - `train_fn.early_stop_min_delta = 1e-4`
   - `train_fn.early_stop_full_eval_only = True`
 
-#### 3.4 评估与日志落盘增强
+#### 3.4 Evaluation and logging persistence enhancements
 
-- 文件：`evaluate_checkpoint.py`
-- 改动：
-  - 支持 `--eval_split {valid,test}`
-  - 支持 `--metrics_out` 与 `--key_metrics_out`
-  - 增加 CUDA/fbgemm 运行前检查
-  - 输出 `recall@10/20` 与 `ndcg@10/20` 等关键指标
+- File: `evaluate_checkpoint.py`
+- Changes:
+  - Supports `--eval_split {valid,test}`
+  - Supports `--metrics_out` and `--key_metrics_out`
+  - Adds pre-run checks for CUDA/fbgemm
+  - Outputs key metrics including `recall@10/20` and `ndcg@10/20`
 
-- 文件：`run_yelp_train_eval.sh`（新增）
-- 改动：
-  - 一键完成预处理（按需）+ 训练 + 最终评估
-  - `RUN_PREPROCESS=auto` 时自动检查当前缓存是否 strict-chrono；若旧缓存则自动重做预处理
-  - 最终评估固定使用 `test`，并落盘日志与指标
+- File: `run_yelp_train_eval.sh` (new)
+- Changes:
+  - One-command workflow for preprocessing (as needed) + training + final evaluation
+  - With `RUN_PREPROCESS=auto`, automatically checks whether current cache is strict-chrono and reruns preprocessing if cache is stale
+  - Final evaluation always uses `test`, with logs and metrics persisted to disk
 
-### 4) 第二次跑模型（当前推荐流程）
+### 4) Second Model Run (Current Recommended Workflow)
 
 ```bash
 cd /home/linjx/code/generative-recommenders
@@ -235,7 +235,7 @@ conda activate gr26
 RUN_PREPROCESS=auto bash run_yelp_train_eval.sh
 ```
 
-关键产物会落在 `logs/yelp/`：
+Key artifacts are written to `logs/yelp/`:
 
 - `preprocess_<ts>.log`
 - `train_<ts>.log`
@@ -244,14 +244,14 @@ RUN_PREPROCESS=auto bash run_yelp_train_eval.sh
 - `metrics_<ts>.txt`
 - `run_<ts>.summary`
 
-### 5) 两次结果对比
+### 5) Result Comparison Between the Two Runs
 
-定义：
+Definitions:
 
-- `Δ = 第二次 - 第一次`
-- `相对Δ = Δ / 第一次`
+- `Δ = Run 2 - Run 1`
+- `Relative Δ = Δ / Run 1`
 
-| 指标 | 第一次 | 第二次 | Δ | 相对Δ |
+| Metric | Run 1 | Run 2 | Δ | Relative Δ |
 | --- | ---: | ---: | ---: | ---: |
 | HR@10 | 0.034869 | 0.046654 | +0.011785 | +33.8% |
 | NDCG@10 | 0.016894 | 0.023001 | +0.006107 | +36.1% |
@@ -271,8 +271,8 @@ RUN_PREPROCESS=auto bash run_yelp_train_eval.sh
 | HR@50_>=4 | 0.132573 | 0.142073 | +0.009500 | +7.2% |
 | MRR_>=4 | 0.019148 | 0.023080 | +0.003932 | +20.5% |
 
-### 6) 结论
+### 6) Conclusion
 
-- 第二次改造后，核心目标指标 `HR@10/20` 与 `NDCG@10/20` 均明显提升。
-- 同时训练/评估协议更规范：训练看 `valid`，最终只在 `test` 汇报。
-- 日志、checkpoint 与关键指标均可稳定落盘，便于后续复现实验与回归分析。
+- After the Run 2 changes, the core target metrics `HR@10/20` and `NDCG@10/20` improved clearly.
+- The training/evaluation protocol is now more rigorous: train-time model selection on `valid`, final reporting only on `test`.
+- Logs, checkpoints, and key metrics are persistently saved, which improves future reproducibility and regression analysis.
